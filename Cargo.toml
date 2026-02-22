@@ -8,7 +8,7 @@ repository = "https://github.com/NicKoehler/md_downloader"
 homepage = "https://github.com/NicKoehler/md_downloader"
 readme = "README.md"
 keywords = ["mediafire", "downloader", "async", "tokio", "file-download"]
-categories = ["asynchronous", "network-programming", "file-io"]
+categories = ["asynchronous", "network-programming"]
 authors = ["NicKoehler <grillinicola@proton.me"]
 
 [dependencies]
