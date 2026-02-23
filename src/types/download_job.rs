@@ -1,5 +1,8 @@
-use crate::utils::try_extract_link;
+use crate::utils::{
+    extract_ukey, try_extract_link_from_normal_html, try_extract_security_token_from_malware_html,
+};
 use futures::StreamExt;
+use md_api::Api;
 use reqwest::header::RANGE;
 use reqwest::{Client, Response, StatusCode};
 use ring::digest::{Context, SHA256};
@@ -30,7 +33,8 @@ pub struct DownloadJob {
     pub download_link: String,
     pub hash: String,
     reverse: bool,
-    client: Client,
+    api_client: Api,
+    download_client: Client,
 }
 
 impl DownloadJob {
@@ -57,7 +61,8 @@ impl DownloadJob {
         download_link: String,
         hash: String,
         reverse: bool,
-        client: Client,
+        api_client: Api,
+        download_client: Client,
     ) -> Self {
         Self {
             filename,
@@ -66,7 +71,8 @@ impl DownloadJob {
             download_link,
             hash,
             reverse,
-            client,
+            api_client,
+            download_client,
         }
     }
 
@@ -262,7 +268,7 @@ impl DownloadJob {
         should_resume: bool,
         start_bytes: u64,
     ) -> Result<(Response, StatusCode), DownloadError> {
-        let mut request = self.client.get(&self.download_link);
+        let mut request = self.download_client.get(&self.download_link);
 
         if should_resume {
             request = request.header(RANGE, format!("bytes={}-", start_bytes));
@@ -297,6 +303,8 @@ impl DownloadJob {
             .map(|v| v.starts_with("text/html"))
             .unwrap_or(false);
 
+        let headers = response.headers().clone();
+
         if !is_html {
             return Ok(response);
         }
@@ -306,9 +314,21 @@ impl DownloadJob {
             .await
             .map_err(|e| DownloadError::ApiError(ApiError::NetworkError(e.to_string())))?;
 
-        let link = try_extract_link(html).ok_or(DownloadError::LinkExtractionError)?;
-
-        let mut request = self.client.get(link);
+        let mut request = match try_extract_link_from_normal_html(&html) {
+            Some(link) => self.download_client.get(link),
+            None => {
+                let ukey = extract_ukey(&headers).ok_or(DownloadError::LinkExtractionError)?;
+                let (security_token, pass) = try_extract_security_token_from_malware_html(&html)
+                    .ok_or(DownloadError::LinkExtractionError)?;
+                let link = self
+                    .api_client
+                    .resolve_malware_url(&ukey, &security_token)
+                    .await
+                    .map_err(|e| DownloadError::ApiError(e))?
+                    .download_url;
+                self.download_client.post(link).body(format!("pass={pass}"))
+            }
+        };
 
         if should_resume {
             request = request.header(RANGE, format!("bytes={}-", start_bytes));

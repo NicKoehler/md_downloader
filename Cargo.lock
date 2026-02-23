@@ -575,9 +575,9 @@ checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
 name = "md_api"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08635a86b0632ddb3834facfd77fd9f40fd0d18eef127eade49d037e58509d6c"
+checksum = "276e75673f66140e933fb88a1be45831452c5d7b45b9428ebce2a1d9c58064ed"
 dependencies = [
  "futures",
  "regex",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "md_downloader"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures",
  "hex",

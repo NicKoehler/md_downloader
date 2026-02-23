@@ -281,6 +281,7 @@ impl MediafireDownloader {
                         file_info.links.normal_download,
                         file_info.hash,
                         self.reverse_downloads,
+                        self.api_client.clone(),
                         self.download_client.clone(),
                     ));
                 }
@@ -304,6 +305,7 @@ impl MediafireDownloader {
                                 file.links.normal_download,
                                 file.hash,
                                 self.reverse_downloads,
+                                self.api_client.clone(),
                                 self.download_client.clone(),
                             ));
                         }
@@ -340,7 +342,7 @@ mod tests {
         LazyLock::new(|| MediafireDownloader::new(5).unwrap());
 
     #[tokio::test]
-    async fn test_files() -> Result<(), DownloadError> {
+    async fn files() -> Result<(), DownloadError> {
         let jobs = DOWNLOADER
             .get_download_jobs_with_progress(&URL, PathBuf::from("."), |job| println!("{job}"))
             .await?;
@@ -349,12 +351,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download() -> Result<(), DownloadError> {
+    async fn download() -> Result<(), DownloadError> {
         let mut jobs = DOWNLOADER
             .get_download_jobs(&URL, PathBuf::from("."))
             .await?;
 
         if let Some(job) = jobs.pop() {
+            println!("{job:?}");
+            job.download_with_progress(|status| println!("{status:?}"))
+                .await?
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn malware_detected_urls() -> Result<(), DownloadError> {
+        let urls = vec![
+            "https://www.mediafire.com/file/7f8x0azhs3pb1wm".to_string(),
+            "https://www.mediafire.com/file/fauj29155dj6ol6".to_string(),
+        ];
+
+        let mut jobs = DOWNLOADER
+            .get_download_jobs(&urls, PathBuf::from("."))
+            .await?;
+
+        while let Some(job) = jobs.pop() {
             println!("{job:?}");
             job.download_with_progress(|status| println!("{status:?}"))
                 .await?
