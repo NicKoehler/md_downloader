@@ -1,6 +1,6 @@
 [package]
 name = "md_downloader"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "Asynchronous Rust downloader for MediaFire files and folders, built on top of md_api."
 license = "MIT"
@@ -15,7 +15,7 @@ authors = ["NicKoehler <grillinicola@proton.me"]
 md5 = "0.8.0"
 hex = "0.4.3"
 ring = "0.17.14"
-md_api = "0.1.2"
+tokio = "1.49.0"
+md_api = "0.1.3"
 futures = "0.3.31"
-tokio = { version = "1.32", features = ["full"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["stream", "gzip", "native-tls"] }
