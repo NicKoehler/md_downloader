@@ -16,7 +16,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-mediafire_downloader = "0.1.0"
+md_downloader = "0.1.3"
 ```
 
 ## Usage
