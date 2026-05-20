@@ -24,7 +24,7 @@ md_downloader = "0.1.3"
 Basic example:
 
 ```Rust
-use mediafire_downloader::MediafireDownloader;
+use md_downloader::MediafireDownloader;
 use std::path::PathBuf;
 use tokio;
 
