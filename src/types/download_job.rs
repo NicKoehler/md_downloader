@@ -33,6 +33,7 @@ pub struct DownloadJob {
     pub download_link: String,
     pub hash: String,
     reverse: bool,
+    skip_hash: bool,
     api_client: Api,
     download_client: Client,
 }
@@ -71,9 +72,29 @@ impl DownloadJob {
             download_link,
             hash,
             reverse,
+            skip_hash: false,
             api_client,
             download_client,
         }
+    }
+
+    /// Enable or disable hash verification for this job.
+    ///
+    /// When `true`, the downloader will skip MD5/SHA-256 verification
+    /// both for resumption checks and after download completion.
+    pub fn with_skip_hash(mut self, value: bool) -> Self {
+        self.skip_hash = value;
+        self
+    }
+
+    /// Set whether to skip hash verification (builder-style mutable).
+    pub fn set_skip_hash(&mut self, value: bool) {
+        self.skip_hash = value;
+    }
+
+    /// Returns whether hash checking is skipped for this job.
+    pub fn is_skip_hash(&self) -> bool {
+        self.skip_hash
     }
 
     /// Downloads the file while reporting progress updates.
@@ -145,6 +166,11 @@ impl DownloadJob {
         self.stream_to_file(response, &mut file, downloaded_bytes, &progress)
             .await?;
 
+        if self.skip_hash {
+            progress(DownloadProgress::Done);
+            return Ok(());
+        }
+
         progress(DownloadProgress::CheckingHash);
 
         match self.check_hash().await {
@@ -168,6 +194,9 @@ impl DownloadJob {
             Ok(meta) => {
                 let file_size = meta.len();
                 if file_size == self.size {
+                    if self.skip_hash {
+                        return None;
+                    }
                     progress(DownloadProgress::CheckingHash);
                     if self.check_hash().await.is_ok() {
                         return None;
@@ -203,6 +232,9 @@ impl DownloadJob {
     /// - The hash format is invalid
     /// - The computed hash does not match
     pub async fn check_hash(&self) -> Result<(), DownloadError> {
+        if self.skip_hash {
+            return Ok(());
+        }
         let mut file = File::open(&self.path)
             .await
             .map_err(|_| DownloadError::IoError)?;
