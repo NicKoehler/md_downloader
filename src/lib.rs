@@ -4,8 +4,15 @@ use md_api::types::{InfoType, Key};
 use md_api::utils::get_client_builder;
 use reqwest::{Client, Proxy};
 use std::collections::BinaryHeap;
+
+/// Browser-like User-Agent used for direct file downloads.
+/// MediaFire serves the full download page (with a resolvable CDN link)
+/// to browser user agents; minimal clients may receive a JS-only variant.
+const BROWSER_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 use std::path::PathBuf;
 
+mod impersonate;
 pub mod types;
 pub mod utils;
 
@@ -51,6 +58,7 @@ impl MediafireDownloader {
         Ok(Self {
             api_client: Api::new(max_retries).map_err(|e| DownloadError::ApiError(e))?,
             download_client: get_client_builder()
+                .user_agent(BROWSER_USER_AGENT)
                 .build()
                 .map_err(|_| DownloadError::ClientInitError)?,
             reverse_downloads: false,

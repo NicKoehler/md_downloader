@@ -1,21 +1,38 @@
+use regex::Regex;
 use reqwest::header::{HeaderMap, SET_COOKIE};
+use std::sync::LazyLock;
+
+/// Matches direct MediaFire CDN download links (e.g. `https://download939.mediafire.com/...`)
+/// found inside an `href` attribute, regardless of where or in what order they appear.
+static CDN_DOWNLOAD_LINK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(https://download\d+\.mediafire\.com/[^"\s]+)"#).unwrap()
+});
 
 /// Attempts to extract a download link from an HTML string.
 ///
-/// Looks for a section of HTML between:
+/// First looks for a section of HTML between:
 ///     aria-label="Download file"
 /// and:
 ///     id="downloadButton"
 ///
-/// If found, it cleans the extracted substring and returns it as `Some(String)`.
-/// Otherwise, returns `None`.
-pub fn try_extract_link_from_normal_html(html: &String) -> Option<String> {
+/// If that layout is not found (for example on `?action=check` pages where the
+/// attribute order differs), it falls back to searching the whole document for
+/// a direct MediaFire CDN download link (`https://download<digits>.mediafire.com/...`).
+///
+/// Returns `Some(String)` with the download link if one can be extracted,
+/// otherwise `None`.
+pub fn try_extract_link_from_normal_html(html: &str) -> Option<String> {
     if let Some(s) = html.split("aria-label=\"Download file\"").nth(1) {
         if let Some(s) = s.split("id=\"downloadButton\"").nth(0) {
-            return Some(s.trim().replace("href=", "").replace("\"", ""));
+            let link = s.trim().replace("href=", "").replace("\"", "");
+            // A valid extraction is a bare URL: no markup or whitespace left over.
+            if link.starts_with("http") && !link.contains(['>', ' ', '\t', '\n']) {
+                return Some(link);
+            }
         }
     }
-    None
+
+    CDN_DOWNLOAD_LINK.captures(html).map(|c| c[1].to_string())
 }
 
 /// Attempts to extract a security token and password from a malware-detected mediafire HTML string.
@@ -65,4 +82,44 @@ pub fn extract_ukey(headers: &HeaderMap) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod test {
+    use super::try_extract_link_from_normal_html;
+
+    const CDN_LINK: &str = "https://download939.mediafire.com/3x2lgmo8aw9/t9n6mnuf9a0t3u9/file.rar";
+
+    #[test]
+    fn standard_layout() {
+        let html = r#"<a class="input popsok" aria-label="Download file" href="https://download939.mediafire.com/3x2lgmo8aw9/t9n6mnuf9a0t3u9/file.rar" id="downloadButton" rel="nofollow">Download</a>"#;
+        assert_eq!(
+            try_extract_link_from_normal_html(html),
+            Some(CDN_LINK.to_string())
+        );
+    }
+
+    #[test]
+    fn reversed_attribute_order() {
+        let html = r#"<a id="downloadButton" aria-label="Download file" href="https://download939.mediafire.com/3x2lgmo8aw9/t9n6mnuf9a0t3u9/file.rar">Download</a>"#;
+        assert_eq!(
+            try_extract_link_from_normal_html(html),
+            Some(CDN_LINK.to_string())
+        );
+    }
+
+    #[test]
+    fn cdn_link_anywhere_fallback() {
+        let html = r#"<html><body><div class="whatever"><a href="https://download939.mediafire.com/3x2lgmo8aw9/t9n6mnuf9a0t3u9/file.rar">Download (1.93GB)</a></div></body></html>"#;
+        assert_eq!(
+            try_extract_link_from_normal_html(html),
+            Some(CDN_LINK.to_string())
+        );
+    }
+
+    #[test]
+    fn no_link_returns_none() {
+        let html = r#"<html><body><p>No downloads here</p></body></html>"#;
+        assert_eq!(try_extract_link_from_normal_html(html), None);
+    }
 }

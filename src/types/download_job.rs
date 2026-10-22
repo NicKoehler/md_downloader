@@ -279,6 +279,22 @@ impl DownloadJob {
             .await
             .map_err(|e| DownloadError::ApiError(ApiError::NetworkError(e.to_string())))?;
 
+        // Cloudflare challenges the plain client with a 403 interstitial;
+        // retry the page with a browser TLS fingerprint before giving up.
+        if response.status() == StatusCode::FORBIDDEN {
+            return self.handle_cf_challenge(should_resume, start_bytes).await;
+        }
+
+        // Fail fast on other error statuses before attempting to interpret
+        // the body as an HTML download page.
+        if !response.status().is_success() {
+            return Err(DownloadError::ApiError(ApiError::NetworkError(format!(
+                "HTTP {} for {}",
+                response.status(),
+                self.download_link
+            ))));
+        }
+
         let response = self
             .resolve_html_redirect(response, should_resume, start_bytes)
             .await?
@@ -288,6 +304,62 @@ impl DownloadJob {
         let status = response.status();
 
         Ok((response, status))
+    }
+
+    /// Fallback for Cloudflare-challenged requests (HTTP 403):
+    /// fetches the download page with a browser TLS fingerprint via
+    /// `curl-impersonate` (see [`crate::impersonate`]), extracts the CDN
+    /// link, and resumes the actual download with the regular client —
+    /// CDN endpoints are not challenged.
+    async fn handle_cf_challenge(
+        &self,
+        should_resume: bool,
+        start_bytes: u64,
+    ) -> Result<(Response, StatusCode), DownloadError> {
+        let imp = crate::impersonate::Impersonator::new(&self.download_client)
+            .await
+            .map_err(|e| {
+                DownloadError::ApiError(ApiError::NetworkError(format!(
+                    "download page is protected by a bot challenge and the \
+                     browser-impersonation fallback is unavailable: {e}"
+                )))
+            })?;
+
+        let (status, body) = imp.get(&self.download_link).await.map_err(|e| {
+            DownloadError::ApiError(ApiError::NetworkError(format!(
+                "bot-challenged download page could not be fetched with \
+                 browser impersonation: {e}"
+            )))
+        })?;
+
+        if status != 200 {
+            return Err(DownloadError::ApiError(ApiError::NetworkError(format!(
+                "HTTP {status} from the impersonated request for {}",
+                self.download_link
+            ))));
+        }
+
+        let html = String::from_utf8_lossy(&body).into_owned();
+        let link = crate::utils::try_extract_link_from_normal_html(&html)
+            .ok_or(DownloadError::LinkExtractionError)?;
+
+        let mut request = self.download_client.get(link);
+        if should_resume {
+            request = request.header(RANGE, format!("bytes={}-", start_bytes));
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| DownloadError::ApiError(ApiError::NetworkError(e.to_string())))?;
+
+        response
+            .error_for_status()
+            .map(|r| {
+                let status = r.status();
+                (r, status)
+            })
+            .map_err(|e| DownloadError::ApiError(ApiError::NetworkError(e.to_string())))
     }
 
     async fn resolve_html_redirect(
@@ -370,7 +442,7 @@ impl DownloadJob {
         response: Response,
         file: &mut File,
         mut downloaded_bytes: u64,
-        progress: &F,
+        progress: F,
     ) -> Result<(), DownloadError>
     where
         F: Fn(DownloadProgress),
