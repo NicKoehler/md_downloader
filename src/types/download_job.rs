@@ -35,6 +35,7 @@ pub struct DownloadJob {
     reverse: bool,
     api_client: Api,
     download_client: Client,
+    flare_solver: Option<crate::flaresolver::FlareSolver>,
 }
 
 impl DownloadJob {
@@ -73,7 +74,19 @@ impl DownloadJob {
             reverse,
             api_client,
             download_client,
+            flare_solver: None,
         }
+    }
+
+    /// Attaches an optional FlareSolverr client used as the preferred
+    /// fallback for Cloudflare-challenged download pages.
+    ///
+    /// # Notes
+    ///
+    /// This method consumes `self` and returns a modified instance.
+    pub fn with_flare_solver(mut self, flare_solver: Option<crate::flaresolver::FlareSolver>) -> Self {
+        self.flare_solver = flare_solver;
+        self
     }
 
     /// Downloads the file while reporting progress updates.
@@ -307,15 +320,34 @@ impl DownloadJob {
     }
 
     /// Fallback for Cloudflare-challenged requests (HTTP 403):
-    /// fetches the download page with a browser TLS fingerprint via
-    /// `curl-impersonate` (see [`crate::impersonate`]), extracts the CDN
-    /// link, and resumes the actual download with the regular client —
-    /// CDN endpoints are not challenged.
+    /// fetches the download page through a real browser — via a configured
+    /// FlareSolverr instance (see [`crate::flaresolver`]) when available,
+    /// otherwise via `curl-impersonate` (see [`crate::impersonate`]) —
+    /// extracts the CDN link, and resumes the actual download with the
+    /// regular client: CDN endpoints are not challenged.
     async fn handle_cf_challenge(
         &self,
         should_resume: bool,
         start_bytes: u64,
     ) -> Result<(Response, StatusCode), DownloadError> {
+        // 1) Preferred: a configured FlareSolverr instance (real headless
+        //    browser, solves even JavaScript-heavy challenges).
+        if let Some(fs) = &self.flare_solver {
+            match fs.get_page(&self.download_link).await {
+                Ok((status, html)) if status == 200 => {
+                    if let Some(link) = crate::utils::try_extract_link_from_normal_html(&html) {
+                        return self
+                            .download_from_cdn(&link, should_resume, start_bytes)
+                            .await;
+                    }
+                }
+                // No usable page/link from FlareSolverr: fall through to the
+                // browser-impersonation fallback below.
+                _ => {}
+            }
+        }
+
+        // 2) Zero-config fallback: browser TLS fingerprint via curl-impersonate.
         let imp = crate::impersonate::Impersonator::new(&self.download_client)
             .await
             .map_err(|e| {
@@ -343,6 +375,17 @@ impl DownloadJob {
         let link = crate::utils::try_extract_link_from_normal_html(&html)
             .ok_or(DownloadError::LinkExtractionError)?;
 
+        self.download_from_cdn(&link, should_resume, start_bytes).await
+    }
+
+    /// Downloads from a resolved CDN link. CDN endpoints are not
+    /// bot-challenged, so the regular client is sufficient.
+    async fn download_from_cdn(
+        &self,
+        link: &str,
+        should_resume: bool,
+        start_bytes: u64,
+    ) -> Result<(Response, StatusCode), DownloadError> {
         let mut request = self.download_client.get(link);
         if should_resume {
             request = request.header(RANGE, format!("bytes={}-", start_bytes));
