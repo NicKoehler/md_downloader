@@ -590,7 +590,7 @@ dependencies = [
 
 [[package]]
 name = "md_downloader"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "flate2",
  "futures",
@@ -600,6 +600,8 @@ dependencies = [
  "regex",
  "reqwest",
  "ring",
+ "serde",
+ "serde_json",
  "tar",
  "tokio",
 ]

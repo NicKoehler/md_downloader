@@ -13,6 +13,7 @@ const BROWSER_USER_AGENT: &str =
 use std::path::PathBuf;
 
 mod impersonate;
+pub mod flaresolver;
 pub mod types;
 pub mod utils;
 
@@ -32,6 +33,7 @@ pub struct MediafireDownloader {
     api_client: Api,
     download_client: Client,
     reverse_downloads: bool,
+    flare_solver: Option<flaresolver::FlareSolver>,
 }
 
 impl MediafireDownloader {
@@ -62,6 +64,7 @@ impl MediafireDownloader {
                 .build()
                 .map_err(|_| DownloadError::ClientInitError)?,
             reverse_downloads: false,
+            flare_solver: None,
         })
     }
 
@@ -85,6 +88,43 @@ impl MediafireDownloader {
             reverse_downloads: value,
             ..self
         }
+    }
+
+    /// Configures a self-hosted
+    /// [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) instance
+    /// used for Cloudflare-challenged download pages.
+    ///
+    /// When set, challenged pages are fetched through FlareSolverr (a real
+    /// headless browser) instead of the built-in `curl-impersonate`
+    /// fallback. If a FlareSolverr request fails, the impersonation fallback
+    /// is still attempted.
+    ///
+    /// # Parameters
+    ///
+    /// - `base_url`: Optional base URL of the FlareSolverr instance
+    ///   (e.g. `Some("http://127.0.0.1:8191")`). `None` leaves the default
+    ///   behavior unchanged.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Self)` with the FlareSolver configuration applied.
+    /// - `Err(DownloadError::ApiError)` if the URL is invalid.
+    ///
+    /// # Notes
+    ///
+    /// This method consumes `self` and returns a modified instance.
+    pub fn with_flare_solver(
+        mut self,
+        base_url: Option<impl Into<String>>,
+    ) -> Result<Self, DownloadError> {
+        if let Some(base_url) = base_url {
+            let flare_solver = flaresolver::FlareSolver::new(base_url, &self.download_client)
+                .map_err(|e| {
+                    DownloadError::ApiError(md_api::types::ApiError::NetworkError(e.to_string()))
+                })?;
+            self.flare_solver = Some(flare_solver);
+        }
+        Ok(self)
     }
 
     /// Configures HTTP proxies for API calls and optionally for downloads.
@@ -291,7 +331,8 @@ impl MediafireDownloader {
                         self.reverse_downloads,
                         self.api_client.clone(),
                         self.download_client.clone(),
-                    ));
+                    )
+                    .with_flare_solver(self.flare_solver.clone()));
                 }
                 InfoType::Folder(folder_info) => {
                     progress(folder_info.name.clone());
@@ -315,7 +356,8 @@ impl MediafireDownloader {
                                 self.reverse_downloads,
                                 self.api_client.clone(),
                                 self.download_client.clone(),
-                            ));
+                            )
+                            .with_flare_solver(self.flare_solver.clone()));
                         }
                     }
 
